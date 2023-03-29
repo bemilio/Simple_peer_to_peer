@@ -27,8 +27,8 @@ if __name__ == '__main__':
     np.random.seed(seed)
     N_iter=10000
     N_it_per_residual_computation = 10
-    N_agents = 10
-    n_neighbors = 4 # for simplicity, each agent has the same number of neighbours. This is only used to create the communication graph (but i's not needed otherwise)
+    N_agents = 2
+    n_neighbors = 1 # for simplicity, each agent has the same number of neighbours. This is only used to create the communication graph (but i's not needed otherwise)
     N_random_tests = 1
 
     # Cost parameters

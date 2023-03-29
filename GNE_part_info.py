@@ -3,7 +3,7 @@ import torch
 from operators.backwardStep import BackwardStep
 
 class primal_dual: # For partial information aggregative games with only shared equality constr.
-    def __init__(self, game, x_0=None, agg_0=None, res_0=None, dual_0=None, aux_0=None, dual_loc_0=None, stepsize=0.01):
+    def __init__(self, game, x_0=None, agg_0=None, res_0=None, dual_0=None, aux_0=None, dual_loc_0=None, stepsize=0.02):
         self.game = game
         # self.P = self.set_stepsize_using_Lip_const(safety_margin)
         self.stepsize = stepsize
@@ -59,7 +59,7 @@ class primal_dual: # For partial information aggregative games with only shared 
         F = self.game.F(x,agg)
 
         # run updates
-        x_new = x - self.stepsize * (F + torch.bmm(torch.transpose(A_i, 1, 2), self.dual) +  torch.bmm(torch.transpose(A_i_loc, 1, 2), self.dual_loc))
+        x_new = x - self.stepsize * (F + torch.bmm(torch.transpose(A_i, 1, 2), self.dual) + torch.bmm(torch.transpose(A_i_loc, 1, 2), self.dual_loc))
         dual_loc_new = dual_loc + self.stepsize * (torch.bmm(A_i_loc, x) - b_i_loc)
         aux_new = aux + self.stepsize * self.N * res
         # the function game.W applies the incidence matrix, the function game.S computes the aggregation
@@ -95,24 +95,22 @@ class primal_dual: # For partial information aggregative games with only shared 
         # d_res = torch.bmm(A_i, self.x) - b_i
         # residual = np.sqrt( ((x_res).norm())**2 + ((d_res).norm())**2 )
 
-        # TODO: compute in P-norm!
         P = self.P
-        nu = self.nu
         x = self.x
-        x_last = self.x_last
+        d_avg = torch.mean(self.dual, dim=0)
+        A_sh = self.game.A_eq_shared
+        b_sh = torch.sum(self.game.b_eq_shared, dim=0)
+        A_i_loc = self.game.A_eq_loc
+        b_i_loc = self.game.b_eq_loc
         # reshape everything in a column vector
-        x = torch.reshape(x, (x.size(0) * x.size(1), 1))
-        x_last = torch.reshape(x_last, (x_last.size(0) * x_last.size(1), 1))
+        res_x = self.game.F(x) + torch.matmul(torch.transpose(A_sh, 1,2), d_avg) + torch.bmm(torch.transpose(A_i_loc, 1, 2), self.dual_loc)
+        res_d_sh = torch.sum(torch.bmm(A_sh, x), dim=0) - torch.sum(b_sh, dim=0)
+        res_d_loc = torch.bmm(A_i_loc, x)- b_i_loc
+        res_x = torch.reshape(res_x, (res_x.size(0) * res_x.size(1), 1))
+        res_d_loc = torch.reshape(res_d_loc, (res_d_loc.size(0), res_d_loc.size(1)) )
 
-        dual_loc = self.dual_loc
-        dual_loc = torch.reshape(dual_loc, (dual_loc.size(0) * dual_loc.size(1), 1))
-        dual_loc_last = self.dual_loc_last
-        dual_loc_last = torch.reshape(dual_loc_last, (dual_loc_last.size(0) * dual_loc_last.size(1), 1))
-
-        omega_1 = torch.row_stack((x, torch.mean(self.dual, dim=0), dual_loc))
-        omega_1_last = torch.row_stack((x_last, torch.mean(self.dual_last, dim=0), dual_loc_last))
-        residual = .5*torch.matmul(torch.matmul( torch.transpose(omega_1 - omega_1_last, 0,1), torch.from_numpy(P)), omega_1 - omega_1_last) + \
-                    torch.norm(self.aux - self.aux_last)**2 + torch.norm(self.agg - self.agg_last)**2 + torch.norm(self.res - self.res_last)**2
+        omega_1_res = torch.row_stack((res_x, res_d_sh, res_d_loc))
+        residual = .5*torch.matmul(torch.matmul( torch.transpose(omega_1_res, 0,1), torch.from_numpy(P)), omega_1_res)
 
         return residual
 

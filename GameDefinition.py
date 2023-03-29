@@ -74,8 +74,8 @@ class AggregativePartialInfo:
         def forward(self, x, agg=None):
             # Optional argument agg allows to provide the estimated aggregation (Partial information)
             N = self.N
-            if not agg is None:
-                agg = torch.sum(torch.bmm(self.C, x), dim=0).unsqueeze(0).repeat(N,1,1)
+            if agg is None:
+                agg = torch.mean(torch.bmm(self.C, x), dim=0).unsqueeze(0).repeat(N,1,1)
             # F = Qx + q + (1/N)*(D_i'Cx + C_i'*D_i*x_i)
             pgrad = torch.bmm(self.Q, x) + self.q + (1 / N) * (
                         torch.bmm(torch.transpose(self.D, 1, 2), agg) + torch.bmm(torch.transpose(self.C,1,2), torch.bmm(self.D, x)))
