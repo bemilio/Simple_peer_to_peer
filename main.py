@@ -2,7 +2,7 @@ import numpy as np
 import networkx as nx
 import torch
 import pickle
-import GNE_part_info import primal_dual
+from GNE_part_info import primal_dual
 from GameDefinition import AggregativePartialInfo
 from SimpleP2PSetup import SimpleP2PSetup
 
@@ -25,17 +25,17 @@ if __name__ == '__main__':
     print("Random seed set to  " + str(seed))
     logging.info("Random seed set to  " + str(seed))
     np.random.seed(seed)
-    N_iter=100000
+    N_iter=10000
     N_it_per_residual_computation = 10
     N_agents = 10
     n_neighbors = 4 # for simplicity, each agent has the same number of neighbours. This is only used to create the communication graph (but i's not needed otherwise)
     N_random_tests = 1
 
     # Cost parameters
-    c_mg = 1
+    c_mg = 10
     c_pr = 10
     c_tr = 1
-    T = 24
+    T = 1
     c_regul = 0.1
 
     # Create load/gen profiles
@@ -78,53 +78,55 @@ if __name__ == '__main__':
             ##########################################
             #   Variables storage inizialization     #
             ##########################################
-            # pFB-Tichonov #TODO: fix!
-            x_store_tich = torch.zeros(N_random_tests, game.N_agents, game.n_opt_variables)
-            dual_store_tich = torch.zeros(N_random_tests, game.N_agents, game.n_shared_ineq_constr)
-            aux_store_tich = torch.zeros(N_random_tests, game.N_agents, game.n_shared_ineq_constr)
-            residual_store_tich = torch.zeros(N_random_tests, (N_iter // N_it_per_residual_computation))
-            local_cost_store_tich = torch.zeros(N_random_tests, game.N_agents, (N_iter // N_it_per_residual_computation))
-            sel_func_store_tich = torch.zeros(N_random_tests, (N_iter // N_it_per_residual_computation))
+            # pFB-Tichonov
+            x_store = torch.zeros(N_random_tests, game.N_agents, game.n_opt_variables)
+            dual_share_store = torch.zeros(N_random_tests, game.N_agents, game.n_shared_eq_constr)
+            dual_loc_store = torch.zeros(N_random_tests, game.N_agents, game.n_loc_eq_constr)
+            aux_store = torch.zeros(N_random_tests, game.N_agents, game.n_shared_eq_constr)
+            res_est_store = torch.zeros(N_random_tests, game.N_agents, game.n_shared_eq_constr)
+            sigma_est_store = torch.zeros(N_random_tests, game.N_agents, game.n_agg_variables)
+            omega_variation_store = torch.zeros(N_random_tests, (N_iter // N_it_per_residual_computation))
+            local_cost_store = torch.zeros(N_random_tests, game.N_agents, (N_iter // N_it_per_residual_computation))
 
         #######################################
         #          GNE seeking                #
         #######################################
         # alg. initialization
         alg = primal_dual(game)
-        alg.set_stepsize_using_Lip_const(safety_margin=.5)
+        # The theoretically-sound stepsize is too small!
+        # alg.set_stepsize_using_Lip_const(safety_margin=.9)
         index_storage = 0
-        avg_time_per_it_tich = 0
+        avg_time_per_it = 0
         for k in range(N_iter):
             if k % N_it_per_residual_computation == 0:
                 # Save performance metrics
-                x, d, a, r, c, s  = alg.get_state()
-                residual_store_tich[test, index_parameter_set, index_storage] = r
-                sel_func_store_tich[test, index_parameter_set, index_storage] = s
-                print("Tichonov: Iteration " + str(k) + " Residual: " + str(r.item()) + " Sel function: " +  str(s.item()) +  " Average time: " + str(avg_time_per_it_tich))
-                logging.info("Tichonov: Iteration " + str(k) + " Residual: " + str(r.item()) + " Sel function: " +  str(s.item()) +" Average time: " + str(avg_time_per_it_tich))
+                x, d, d_l, aux, agg, res_est, r, c  = alg.get_state()
+                omega_variation_store[test, index_storage] = r
+                local_cost_store[test, :,index_storage] = c.flatten(0)
+                print("Iteration " + str(k) + " Residual: " + str(r.item()) + " Average time: " + str(avg_time_per_it))
+                logging.info("Iteration " + str(k) + " Residual: " + str(r.item()) +" Average time: " + str(avg_time_per_it))
                 index_storage = index_storage + 1
             #  Algorithm run
             start_time = time.time()
-            alg_tich.run_once()
+            alg.run_once()
             end_time = time.time()
-            avg_time_per_it_tich = (avg_time_per_it_tich * k + (end_time - start_time)) / (k + 1)
+            avg_time_per_it = (avg_time_per_it * k + (end_time - start_time)) / (k + 1)
 
         # Store final variables
-        x, d, a, r, c, s = alg_tich.get_state()
-        x_store_tich[test, index_parameter_set, :, :] = x.flatten(1)
-        dual_store_tich[test, index_parameter_set, :, :] = d.flatten(1)
-        aux_store_tich[test, index_parameter_set, :, :] = a.flatten(1)
-        local_cost_store_tich[test, index_parameter_set, :, :] = c.flatten(1)
+        x, d, d_l, aux, agg, res_est, r, c  = alg.get_state()
+        x_store[test, :, :] = x.flatten(1)
+        dual_share_store[test, :, :] = d.flatten(1)
+        dual_loc_store[test,:,:] = d_l.flatten(1)
+        aux_store[test, :, :] = aux.flatten(1)
+        sigma_est_store[test,:,:] = agg.flatten(1)
+        res_est_store[test,:,:] = res_est.flatten(1)
 
     print("Saving results...")
     logging.info("Saving results...")
     f = open('saved_test_result_'+ str(job_id) + ".pkl", 'wb')
-    pickle.dump([ x_store_tich, x_store_hsdm, x_store_std,
-                 dual_store_tich, dual_store_hsdm, dual_store_std,
-                 aux_store_tich, aux_store_hsdm, aux_store_std,
-                 residual_store_tich, residual_store_hsdm, residual_store_std,
-                 sel_func_store_tich, sel_func_store_hsdm, sel_func_store_std,
-                 parameters_to_test_tich, parameters_to_test_hsdm], f)
+    pickle.dump([ x_store, dual_share_store, dual_loc_store,
+                 aux_store, sigma_est_store, res_est_store,
+                 omega_variation_store, local_cost_store, game_params.edge_to_index], f)
     f.close()
     print("Saved")
     logging.info("Saved, job done")

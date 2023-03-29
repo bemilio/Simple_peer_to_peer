@@ -27,6 +27,7 @@ class AggregativePartialInfo:
                 A_eq_loc, A_ineq_loc, b_eq_loc, b_ineq_loc, communication_graph = self.setToTestGameSetup()
         self.N_agents = N
         self.n_opt_variables = Q.size(1)
+        self.n_agg_variables = C.size(1)
         # Local constraints
         self.A_eq_loc = A_loc
         self.b_eq_loc = b_loc
@@ -39,9 +40,9 @@ class AggregativePartialInfo:
         self.F = self.GameMapping(Q, q, C, D)
         self.J = self.GameCost(Q, q, C, D)
         # Define the consensus operator
-        self.K = self.Consensus(communication_graph, self.n_shared_eq_constr)
+        # self.K = self.Consensus(communication_graph, self.n_shared_eq_constr)
         # Define the adjacency operator
-        self.W = self.Adjacency(communication_graph, self.n_shared_eq_constr)
+        self.W = self.Adjacency(communication_graph)
         # Define the operator which computes the locally-estimated aggregation
         self.S = self.Aggregation(C)
 
@@ -73,7 +74,7 @@ class AggregativePartialInfo:
         def forward(self, x, agg=None):
             # Optional argument agg allows to provide the estimated aggregation (Partial information)
             N = self.N
-            if not agg:
+            if not agg is None:
                 agg = torch.sum(torch.bmm(self.C, x), dim=0).unsqueeze(0).repeat(N,1,1)
             # F = Qx + q + (1/N)*(D_i'Cx + C_i'*D_i*x_i)
             pgrad = torch.bmm(self.Q, x) + self.q + (1 / N) * (
@@ -108,19 +109,21 @@ class AggregativePartialInfo:
             L = L.tocsr()
             i = torch.LongTensor(indices)
             v = torch.FloatTensor(values)
-            L_torch = torch.zeros(L.shape[0],L.shape[1], N_dual_variables, N_dual_variables)
+            L_torch = torch.zeros(L.shape[0],L.shape[1], 1, 1)
             for i in rows:
                 for j in cols:
-                    L_torch[i,j,:,:] = L[i,j] * torch.eye(N_dual_variables)
+                    L_torch[i,j,0,0] = L[i,j]
             # TODO: understand why sparse does not work
             # self.L = L_torch.to_sparse_coo()
             self.L = L_torch
 
-        def forward(self, dual):
-            return torch.sum(torch.matmul(self.L, dual), dim=1) # This applies the laplacian matrix to each of the dual variables
+        def forward(self, x):
+            n_x = x.size(1)
+            L_expanded = torch.kron(torch.eye(n_x).unsqueeze(0).unsqueeze(0), self.L)
+            return torch.sum(torch.matmul(L_expanded, x), dim=1) # This applies the laplacian matrix to each of the dual variables
 
     class Adjacency(torch.nn.Module):
-        def __init__(self, communication_graph, N_dual_variables):
+        def __init__(self, communication_graph):
             super().__init__()
             # Convert Laplacian matrix to sparse tensor
             W = networkx.adjacency_matrix(communication_graph).tocoo()
@@ -129,16 +132,19 @@ class AggregativePartialInfo:
             cols = W.col
             indices = np.vstack((rows, cols))
             W = W.tocsr()
-            W_torch = torch.zeros(W.shape[0],W.shape[1], N_dual_variables, N_dual_variables)
+            N=W.shape[0]
+            W_torch = torch.zeros(N,N,1,1)
             for i in rows:
                 for j in cols:
-                    W_torch[i,j,:,:] = W[i,j] * torch.eye(N_dual_variables)
+                    W_torch[i,j,0,0] = W[i,j]
             # TODO: understand why sparse does not work
             # self.L = L_torch.to_sparse_coo()
             self.W = W_torch
 
-        def forward(self, dual):
-            return torch.sum(torch.matmul(self.W, dual), dim=1) # This applies the laplacian matrix to each of the dual variables
+        def forward(self, x):
+            n_x = x.size(1)
+            W_expanded = torch.kron(torch.eye(n_x).unsqueeze(0).unsqueeze(0), self.W)
+            return torch.sum(torch.matmul(W_expanded, x), dim=1) # This applies the adjacency matrix to each of the dual variables
 
     class Aggregation(torch.nn.Module):
         def __init__(self, C):
@@ -150,3 +156,13 @@ class AggregativePartialInfo:
 
     def setToTestGameSetup(self):
         raise NotImplementedError("[GameAggregativePartInfo:setToTestGameSetup] Test game not implemented")
+
+    def get_strMon_Lip_constants_eq_constraints(self):
+        N=self.N_agents
+        ist_of_A_i = [self.A_eq_shared[i, :, :] for i in range(N)]
+        list_of_A_i = [self.A_eq_shared[i, :, :] for i in range(N)]
+        A = torch.column_stack(list_of_A_i)
+        A_square = torch.matmul(A, torch.transpose(A, 0, 1))
+        mu_A = torch.min(torch.linalg.eigvals(A_square).real)
+        L_A = torch.sqrt(torch.max(torch.linalg.eigvals(A_square).real))
+        return mu_A, L_A

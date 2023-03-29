@@ -17,7 +17,8 @@ class SimpleP2PSetup:
         self.N_agents = N_agents
         self.Q,self.q, self.C, self.D = self.define_cost_functions(n_x_per_t, T, c_mg, c_pr, c_tr, c_regul, x_pr_setpoint)
         self.A_eq_local_const, self.b_eq_local_const = self.define_local_constraints(n_x_per_t,  T,loads)
-        self.A_eq_shared_const, self.b_eq_shared_const = self.define_shared_constraints(n_x_per_t, comm_graph)
+        # edge_to_index maps the graph edge to the index in the constraints
+        self.A_eq_shared_const, self.b_eq_shared_const, self.edge_to_index = self.define_shared_constraints(n_x_per_t, comm_graph, T)
 
     def define_cost_functions(self, n_x_per_t, T, c_mg, c_pr, c_tr, c_regul, x_pr_setpoint):
         N_agents = self.N_agents
@@ -52,7 +53,7 @@ class SimpleP2PSetup:
         return Q, q, C, D
 
     def define_local_constraints(self, n_x_per_t, T, loads):
-        n_local_const_eq = self.N_agents # one power balance const. per agent
+        n_local_const_eq = 1 # power balance constraint
         N_agents=self.N_agents
         A_eq_loc_const_single_t = torch.ones(n_local_const_eq, n_x_per_t)
         A_eq_loc_const_all_t = torch.kron(torch.eye(T), A_eq_loc_const_single_t)
@@ -62,7 +63,7 @@ class SimpleP2PSetup:
 
         return A_eq, b_eq
 
-    def define_shared_constraints(self, loads, graph, n_x_per_t, T):
+    def define_shared_constraints(self, n_x_per_t, graph, T):
         N = self.N_agents
         n_opt = n_x_per_t
         n_edg_without_self_loops = len(graph.edges) - N
@@ -78,14 +79,16 @@ class SimpleP2PSetup:
                 i=i+1
         for i in range(N):
             j=0
-            for neigh in graph.neighbours(i):
-                A_eq_shared_single_t[i, edge_to_index[(i,neigh)],j+2]=1
-                j=j+1
+            for neigh in graph.neighbors(i):
+                if neigh!=i:
+                    edge = (i,neigh) if (i,neigh) in edge_to_index.keys() else (neigh,i)
+                    A_eq_shared_single_t[i, edge_to_index[edge],j+2]=1
+                    j=j+1
         A_eq_shared = torch.zeros(N, T*n_eq_constr, T*n_x_per_t)
         for i in range(N):
             A_eq_shared[i,:,:] = torch.kron(torch.eye(T), A_eq_shared_single_t[i,:,:])
 
         b_eq_shared = torch.zeros(N, T*n_eq_constr, 1)
 
-        return A_eq_shared, b_eq_shared
+        return A_eq_shared, b_eq_shared, edge_to_index
 
