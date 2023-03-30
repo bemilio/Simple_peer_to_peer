@@ -3,7 +3,7 @@ import torch
 from operators.backwardStep import BackwardStep
 
 class primal_dual: # For partial information aggregative games with only shared equality constr.
-    def __init__(self, game, x_0=None, agg_0=None, res_0=None, dual_0=None, aux_0=None, dual_loc_0=None, stepsize=0.02):
+    def __init__(self, game, x_0=None, agg_0=None, res_0=None, dual_0=None, aux_0=None, dual_loc_0=None, stepsize=0.01):
         self.game = game
         # self.P = self.set_stepsize_using_Lip_const(safety_margin)
         self.stepsize = stepsize
@@ -17,23 +17,23 @@ class primal_dual: # For partial information aggregative games with only shared 
             self.x = x_0
         else:
             self.x = torch.zeros(self.N, n, 1)
-        if agg_0:
+        if agg_0 is not None:
             self.agg = agg_0
         else:
             self.agg = self.game.S(self.x)
-        if res_0:
+        if res_0 is not None:
             self.res = res_0
         else:
             self.res = torch.bmm(self.game.A_eq_shared, self.x) - self.game.b_eq_shared
-        if aux_0:
+        if aux_0 is not None:
             self.aux = aux_0
         else:
             self.aux = torch.zeros(self.N,m, 1)
-        if dual_0:
+        if dual_0 is not None:
             self.dual = dual_0
         else:
             self.dual = self.aux
-        if dual_loc_0:
+        if dual_loc_0 is not None:
             self.dual_loc = dual_loc_0
         else:
             self.dual_loc = torch.zeros(self.N,m_loc, 1)
@@ -81,10 +81,24 @@ class primal_dual: # For partial information aggregative games with only shared 
         self.res_last = res
         self.agg_last = agg
 
-    def get_state(self):
-        residual = self.compute_residual()
+    def get_state(self, ref_point=None):
+        residual,  constr_viol_sh, constr_viol_loc = self.compute_residual()
         cost = self.game.J(self.x)
-        return self.x, self.dual, self.dual_loc, self.aux, self.agg, self.res, residual, cost
+        if ref_point is not None:
+            dist_ref = self.compute_distance_from_ref(ref_point)
+        else:
+            dist_ref=None
+        return self.x, self.dual, self.dual_loc, self.aux, self.agg, self.res, residual, cost, constr_viol_sh, constr_viol_loc, dist_ref
+
+    def compute_distance_from_ref(self, ref_point):
+        x = self.x
+        d_avg = torch.mean(self.dual, dim=0)
+        d_loc = self.dual_loc
+        x = torch.reshape(x, (x.size(0) * x.size(1), 1))
+        d_loc = torch.reshape(d_loc, (d_loc.size(0) * d_loc.size(1), 1))
+        omega_1 = torch.row_stack((x, d_avg, d_loc))
+        dist_ref = torch.matmul(torch.matmul(torch.transpose(omega_1-ref_point,0,1), torch.from_numpy(self.P)), omega_1-ref_point)
+        return dist_ref
 
     def compute_residual(self):
         # As the game is strongly monotone, the convergence is checked by x_{t+1} - x_t.
@@ -107,12 +121,13 @@ class primal_dual: # For partial information aggregative games with only shared 
         res_d_sh = torch.sum(torch.bmm(A_sh, x), dim=0) - torch.sum(b_sh, dim=0)
         res_d_loc = torch.bmm(A_i_loc, x)- b_i_loc
         res_x = torch.reshape(res_x, (res_x.size(0) * res_x.size(1), 1))
-        res_d_loc = torch.reshape(res_d_loc, (res_d_loc.size(0), res_d_loc.size(1)) )
+        res_d_loc = torch.reshape(res_d_loc, (res_d_loc.size(0) * res_d_loc.size(1), 1) )
 
         omega_1_res = torch.row_stack((res_x, res_d_sh, res_d_loc))
         residual = .5*torch.matmul(torch.matmul( torch.transpose(omega_1_res, 0,1), torch.from_numpy(P)), omega_1_res)
-
-        return residual
+        constr_viol_sh = torch.norm(res_d_sh)
+        constr_viol_loc = torch.norm(res_d_loc)
+        return residual, constr_viol_sh, constr_viol_loc
 
 
 
