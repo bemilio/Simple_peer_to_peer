@@ -90,14 +90,15 @@ class primal_dual: # For partial information aggregative games with only shared 
             dist_ref=None
         return self.x, self.dual, self.dual_loc, self.aux, self.agg, self.res, residual, cost, constr_viol_sh, constr_viol_loc, dist_ref
 
-    def compute_distance_from_ref(self, ref_point):
+    def compute_distance_from_ref(self, ref_x):
         x = self.x
-        d_avg = torch.mean(self.dual, dim=0)
-        d_loc = self.dual_loc
-        x = torch.reshape(x, (x.size(0) * x.size(1), 1))
-        d_loc = torch.reshape(d_loc, (d_loc.size(0) * d_loc.size(1), 1))
-        omega_1 = torch.row_stack((x, d_avg, d_loc))
-        dist_ref = torch.matmul(torch.matmul(torch.transpose(omega_1-ref_point,0,1), torch.from_numpy(self.P)), omega_1-ref_point)
+        # d_avg = torch.mean(self.dual, dim=0)
+        # d_loc = self.dual_loc
+        # x = torch.reshape(x, (x.size(0) * x.size(1), 1))
+        # d_loc = torch.reshape(d_loc, (d_loc.size(0) * d_loc.size(1), 1))
+        # omega_1 = torch.row_stack((x, d_avg, d_loc))
+        # dist_ref = torch.matmul(torch.matmul(torch.transpose(omega_1-ref_point,0,1), torch.from_numpy(self.P)), omega_1-ref_point)
+        dist_ref = torch.norm(x-ref_x)
         return dist_ref
 
     def compute_residual(self):
@@ -122,11 +123,16 @@ class primal_dual: # For partial information aggregative games with only shared 
         res_d_loc = torch.bmm(A_i_loc, x)- b_i_loc
         res_x = torch.reshape(res_x, (res_x.size(0) * res_x.size(1), 1))
         res_d_loc = torch.reshape(res_d_loc, (res_d_loc.size(0) * res_d_loc.size(1), 1) )
+        res_avg_track = torch.norm(self.dual - d_avg*torch.ones(self.dual.size()))**2
+        res_res_track = torch.norm(self.res - torch.mean(self.res,dim=0) * torch.ones(self.res.size()))**2
+        res_agg_track = torch.norm(self.agg - torch.mean(self.agg, dim=0) * torch.ones(self.agg.size()))**2
 
         omega_1_res = torch.row_stack((res_x, res_d_sh, res_d_loc))
-        residual = .5*torch.matmul(torch.matmul( torch.transpose(omega_1_res, 0,1), torch.from_numpy(P)), omega_1_res)
-        constr_viol_sh = torch.norm(res_d_sh)
-        constr_viol_loc = torch.norm(res_d_loc)
+        residual = .5*torch.matmul(torch.matmul( torch.transpose(omega_1_res, 0,1), torch.from_numpy(P)), omega_1_res) \
+                   + res_avg_track + res_res_track + res_agg_track
+        constr_viol_sh = torch.norm(res_d_sh )
+        constr_viol_loc = torch.sqrt(torch.norm(res_d_loc )**2 + \
+                          torch.norm(torch.minimum(torch.bmm(self.game.A_sel_positive_vars,x), torch.zeros(x.size()) ))**2)
         return residual, constr_viol_sh, constr_viol_loc
 
 

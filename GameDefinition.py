@@ -21,7 +21,7 @@ class AggregativePartialInfo:
     # The game is in the form:
     # \sum .5 x_i' Q_i x_i + q_i'x_i + (1/N)(D_i x_i)'Cx
     # s.t. \sum_i A_shared_i x_i = \sum_i b_shared_i
-    def __init__(self, N, communication_graph, Q, q, C, D, A_loc, b_loc, A_shared, b_shared, test=False):
+    def __init__(self, N, communication_graph, Q, q, C, D, A_loc, b_loc, A_shared, b_shared, A_sel_positive_vars, gamma_barr=10, test=False):
         if test:
             N, n_opt_var, Q, c, Q_sel, c_sel, A_shared, b_shared, \
                 A_eq_loc, A_ineq_loc, b_eq_loc, b_ineq_loc, communication_graph = self.setToTestGameSetup()
@@ -36,9 +36,12 @@ class AggregativePartialInfo:
         self.A_eq_shared= A_shared
         self.b_eq_shared = b_shared
         self.n_shared_eq_constr = self.A_eq_shared.size(1)
+        # Selection matrix for variables that need be positive
+        self.A_sel_positive_vars = A_sel_positive_vars
+        self.gamma_barr = gamma_barr
         # Define the (nonlinear) game mapping as a torch custom activation function
-        self.F = self.GameMapping(Q, q, C, D)
-        self.J = self.GameCost(Q, q, C, D)
+        self.F = self.GameMapping(Q, q, C, D, A_sel_positive_vars, gamma_barr)
+        self.J = self.GameCost(Q, q, C, D) # TODO: includ here barrier function
         # Define the consensus operator
         # self.K = self.Consensus(communication_graph, self.n_shared_eq_constr)
         # Define the adjacency operator
@@ -62,7 +65,7 @@ class AggregativePartialInfo:
             return cost
 
     class GameMapping(torch.nn.Module):
-        def __init__(self, Q, q, C, D):
+        def __init__(self, Q, q, C, D, A_sel_positive_vars, gamma_barr):
             super().__init__()
             self.Q = Q
             self.q = q
@@ -70,14 +73,18 @@ class AggregativePartialInfo:
             self.D = D
             self.N = Q.size(0)
             self.n_x = Q.size(1)
+            self.A_sel_positive_vars = A_sel_positive_vars
+            self.gamma_barr = gamma_barr
 
         def forward(self, x, agg=None):
             # Optional argument agg allows to provide the estimated aggregation (Partial information)
             N = self.N
             if agg is None:
                 agg = torch.mean(torch.bmm(self.C, x), dim=0).unsqueeze(0).repeat(N,1,1)
+            #Force positive variables via barrier function. #TODO: clean this up!
+            barrier = torch.maximum( -torch.div(1,torch.bmm(self.A_sel_positive_vars, x)), -self.gamma_barr * torch.ones(x.size()))
             # F = Qx + q + (1/N)*(D_i'Cx + C_i'*D_i*x_i)
-            pgrad = torch.bmm(self.Q, x) + self.q + (1 / N) * (
+            pgrad = barrier + torch.bmm(self.Q, x) + self.q + (1 / N) * (
                         torch.bmm(torch.transpose(self.D, 1, 2), agg) + torch.bmm(torch.transpose(self.C,1,2), torch.bmm(self.D, x)))
             return pgrad
 

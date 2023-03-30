@@ -19,6 +19,7 @@ class SimpleP2PSetup:
         self.A_eq_local_const, self.b_eq_local_const = self.define_local_constraints(n_x_per_t,  T,loads)
         # edge_to_index maps the graph edge to the index in the constraints
         self.A_eq_shared_const, self.b_eq_shared_const, self.edge_to_index = self.define_shared_constraints(n_x_per_t, comm_graph, T)
+        self.A_sel_positive_vars = self.define_positive_variables(n_x_per_t, T)
 
     def define_cost_functions(self, n_x_per_t, T, c_mg, c_pr, c_tr, c_regul, x_pr_setpoint):
         N_agents = self.N_agents
@@ -58,10 +59,17 @@ class SimpleP2PSetup:
         A_eq_loc_const_single_t = torch.ones(n_local_const_eq, n_x_per_t)
         A_eq_loc_const_all_t = torch.kron(torch.eye(T), A_eq_loc_const_single_t)
         A_eq = A_eq_loc_const_all_t.unsqueeze(0).repeat(N_agents,1,1)
-
         b_eq = loads
 
         return A_eq, b_eq
+
+    def define_positive_variables(self, n_x_per_t, T): #Constraint some variables to be positive. WARNING these are "soft" constraints
+        A_sel_single_t = torch.zeros(n_x_per_t, n_x_per_t)
+        A_sel_single_t[0, 0] = 1 #main grid power must be positive
+        A_sel_single_t[1, 1] = 1  # main grid power must be positive
+        A_sel_all_t = torch.kron(torch.eye(T), A_sel_single_t)
+        A_sel_pos = A_sel_all_t.unsqueeze(0).repeat(self.N_agents, 1, 1)
+        return  A_sel_pos
 
     def define_shared_constraints(self, n_x_per_t, graph, T):
         N = self.N_agents
